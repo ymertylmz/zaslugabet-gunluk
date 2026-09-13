@@ -129,6 +129,91 @@ def odds_page(mid,h,a):
    last=f'{name} • {type(e).__name__}'
  return None,None,last
 
+
+def bulletin_fetch(day):
+ url='https://arsiv.mackolik.com/AjaxHandlers/ProgramDataHandler.ashx'
+ params={
+  'type':'6',
+  'sortValue':'DATE',
+  'day':day.strftime('%d.%m.%Y'),
+  'sort':'-1',
+  'sortDir':'-1',
+  'groupId':'-1',
+  'np':'1',
+  'sport':'1'
+ }
+ try:
+  r=SCRAPER.get(url,params=params,headers=HEAD,timeout=25,allow_redirects=True)
+  return r.status_code,r.url,r.text or ''
+ except Exception as e:
+  return 0,'',f'ERROR: {type(e).__name__}: {e}'
+
+def extract_bulletin_pair(html, home, away):
+ if not html or html.startswith('ERROR:'):
+  return None,None,'BÜLTEN YOK'
+ soup=BeautifulSoup(html,'lxml')
+ plain=' '.join(soup.stripped_strings)
+ nplain=norm(plain)
+ nh=norm(home); na=norm(away)
+
+ # Önce takım isimlerinin yakınındaki alanı bul.
+ positions=[]
+ for key in [nh,na]:
+  p=nplain.find(key)
+  if p>=0: positions.append(p)
+ if not positions:
+  return None,None,'MAÇ BÜLTENDE BULUNAMADI'
+
+ start=max(0,min(positions)-1200)
+ end=min(len(nplain),max(positions)+6000)
+ chunk=nplain[start:end]
+
+ # Eğer İY/MS başlığı varsa onun çevresini tercih et.
+ for mk in ['ilk yari/mac sonucu','ilk yari mac sonucu','iy/ms']:
+  p=chunk.find(mk)
+  if p>=0:
+   chunk=chunk[p:p+2500]
+   break
+
+ pats21=[
+  r'(?<!\d)2\s*/\s*1(?:\s|:|-)+(\d+(?:[.,]\d+)?)',
+  r'["\']?2/1["\']?\s*[:=]\s*["\']?(\d+(?:[.,]\d+)?)'
+ ]
+ pats12=[
+  r'(?<!\d)1\s*/\s*2(?:\s|:|-)+(\d+(?:[.,]\d+)?)',
+  r'["\']?1/2["\']?\s*[:=]\s*["\']?(\d+(?:[.,]\d+)?)'
+ ]
+ v21=v12=None
+ for p in pats21:
+  m=re.search(p,chunk,re.S)
+  if m:
+   v21=float(m.group(1).replace(',','.')); break
+ for p in pats12:
+  m=re.search(p,chunk,re.S)
+  if m:
+   v12=float(m.group(1).replace(',','.')); break
+
+ if v21 is not None and v12 is not None:
+  return v21,v12,'BÜLTENDEN BULUNDU'
+ return None,None,'MAÇ VAR • İY/MS ÇÖZÜLEMEDİ'
+
+def bulletin_diag(day):
+ code,url,html=bulletin_fetch(day)
+ soup=BeautifulSoup(html,'lxml') if html else None
+ plain=' '.join(soup.stripped_strings) if soup else ''
+ nplain=norm(plain)
+ return {
+  'HTTP':code,
+  'Boyut':len(html),
+  'Son URL':url,
+  'Galatasaray var mı':'EVET' if 'galatasaray' in nplain else 'HAYIR',
+  'Kocaelispor var mı':'EVET' if 'kocaelispor' in nplain else 'HAYIR',
+  'İY/MS metni':'EVET' if any(x in nplain for x in ['ilk yari/mac sonucu','ilk yari mac sonucu','iy/ms']) else 'HAYIR',
+  '2/1 metni':'EVET' if re.search(r'(?<!\d)2\s*/\s*1(?!\d)',plain) else 'HAYIR',
+  '1/2 metni':'EVET' if re.search(r'(?<!\d)1\s*/\s*2(?!\d)',plain) else 'HAYIR',
+  'İlk 350 karakter':plain[:350]
+ }
+
 def tag(n,fp):
  if n>=20 and fp>=9:return '🟢 GÜÇLÜ'
  if n>=8 and fp>=7:return '🟡 TAKİP'
@@ -183,6 +268,22 @@ else:
  )
  st.info('Beklenen sağlam DB: 56.513 maç ve 46.200 adet 2/1+1/2 oranlı maç.')
  st.stop()
+
+
+st.markdown("### ⚡ V10 Tek İstek Bülten Testi")
+st.caption("Amaç: 88 ayrı maç sayfası yerine Mackolik İddaa bültenini tek istekte çekmek.")
+if st.button("⚡ 13.09.2026 BÜLTENİNİ TEST ET", use_container_width=True):
+ from datetime import date as _date
+ _d=_date(2026,9,13)
+ with st.spinner("Mackolik bülteni tek istekte çekiliyor..."):
+  _diag=bulletin_diag(_d)
+  _code,_url,_html=bulletin_fetch(_d)
+  _b21,_b12,_bst=extract_bulletin_pair(_html,'Galatasaray','Kocaelispor')
+ st.dataframe([_diag],use_container_width=True,hide_index=True)
+ if _b21 is not None:
+  st.success(f"🔥 BÜLTEN ÇALIŞTI • Galatasaray-Kocaelispor • 2/1 = {_b21:.2f} • 1/2 = {_b12:.2f}")
+ else:
+  st.warning(f"Bülten geldi ama oran çifti henüz ayrışmadı • {_bst}")
 
 st.markdown("### 🎯 V9 Oran Motoru Testi")
 if st.button("🎯 GALATASARAY-KOCAELİ ORANINI ÇEK", use_container_width=True):
