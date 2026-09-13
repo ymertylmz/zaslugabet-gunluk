@@ -3,6 +3,7 @@ import re, html, time, sqlite3
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 import streamlit as st
 
@@ -13,7 +14,8 @@ DAILY=BASE+'/perform/p0/ajax/components/competition/livescores/json'
 EXACT={
  ('İspanya','LaLiga'):('Spain','La Liga'),('İspanya','LaLiga 2'):('Spain','Segunda División'),('İngiltere','Premier Lig'):('England','Premier League'),('İngiltere','Championship'):('England','Championship'),('İngiltere','1. Lig'):('England','League One'),('İngiltere','2. Lig'):('England','League Two'),('İngiltere','Ulusal Lig'):('England','National League'),('İtalya','Serie A'):('Italy','Serie A'),('Fransa','Ligue 1'):('France','Ligue 1'),('Fransa','Ligue 2'):('France','Ligue 2'),('Fransa','Ligue 3'):('France','National'),('Almanya','Bundesliga'):('Germany','Bundesliga'),('Almanya','2. Bundesliga'):('Germany','2. Bundesliga'),('Almanya','3. Lig'):('Germany','3. Liga'),('Portekiz','Premier Lig'):('Portugal','Primeira Liga'),('Türkiye','Trendyol Süper Lig'):('Turkey','Süper Lig'),('Finlandiya','Veikkausliiga'):('Finland','Veikkausliiga'),('Avusturya','2. Lig'):('Austria','2. Liga'),('Avusturya','Bundesliga'):('Austria','Bundesliga'),('Danimarka','Süper Lig'):('Denmark','Superliga'),('Danimarka','1. Lig'):('Denmark','1. Division'),('İsveç','Superettan'):('Sweden','Superettan'),('İsveç','Allsvenskan'):('Sweden','Allsvenskan'),('Norveç','Eliteserien'):('Norway','Eliteserien'),('Hollanda','Eredivisie'):('Netherlands','Eredivisie'),('Hollanda','Eerste Divisie'):('Netherlands','Eerste Divisie'),('İskoçya','Championship'):('Scotland','Championship'),('İskoçya','Championship Play-out'):('Scotland','Championship'),('İskoçya','Premiership'):('Scotland','Premiership'),('İskoçya','Premiership Play-out'):('Scotland','Premiership'),('Polonya','Ekstraklasa'):('Poland','Ekstraklasa'),('Belçika','Pro Lig'):('Belgium','Pro League'),('İrlanda Cumhuriyeti','Premier Lig'):('Ireland','Premier Division'),('Kuzey İrlanda','Premiership'):('Northern Ireland','Premiership'),('Kuzey İrlanda','Premiership Play-off'):('Northern Ireland','Premiership'),('Rusya','Premier Lig'):('Russia','Premier League'),('İsviçre','Süper Lig'):('Switzerland','Super League'),('Yunanistan','Süper Lig'):('Greece','Super League 1'),('Çin','Süper Lig'):('China','Super League'),('ABD','MLS'):('USA','MLS'),('Avrupa','Şampiyonlar Ligi'):('Europe','Şampiyonlar Ligi'),('Avrupa','Avrupa Ligi'):('Europe','Avrupa Ligi'),('Avrupa','Konferans Ligi'):('Europe','Konferans Ligi')}
 
-HEAD={'User-Agent':'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/128 Safari/537.36','Accept-Language':'tr-TR,tr;q=0.9','Referer':BASE+'/'}
+HEAD={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36','Accept-Language':'tr-TR,tr;q=0.9,en;q=0.8','Referer':BASE+'/'}
+SCRAPER=cloudscraper.create_scraper(browser={'browser':'chrome','platform':'windows','mobile':False})
 def norm(s):
  s=str(s or '').lower()
  for a,b in {'ı':'i','ş':'s','ğ':'g','ü':'u','ö':'o','ç':'c','İ':'i'}.items(): s=s.replace(a,b)
@@ -84,9 +86,17 @@ def parse_pair(txt):
  return None,None,'İY/MS MARKET YOK'
 
 def odds_page(mid,h,a):
+ # Oran sayfaları için Cloudflare uyumlu oturum kullan.
  for sl in [f'{slug(h)}-vs-{slug(a)}','x-vs-y']:
-  r=get(f'{BASE}/mac/{sl}/iddaa/{mid}')
-  if r and len(r.text)>800:return r.text
+  url=f'{BASE}/mac/{sl}/iddaa/{mid}'
+  for i in range(3):
+   try:
+    r=SCRAPER.get(url,headers=HEAD,timeout=25)
+    if r.status_code==200 and len(r.text)>800:
+     return r.text
+   except Exception:
+    pass
+   time.sleep(.6+i*.5)
  return None
 def tag(n,fp):
  if n>=20 and fp>=9:return '🟢 GÜÇLÜ'
