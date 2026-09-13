@@ -48,116 +48,86 @@ def slug(s): return re.sub(r'-+','-',re.sub(r'[^a-z0-9]+','-',norm(s))).strip('-
 def parse_pair(html):
  if not html:
   return None,None,'SAYFA AÇILMADI'
+
  soup=BeautifulSoup(html,'lxml')
+ text=' '.join(soup.stripped_strings)
 
- # V7: Mackolik'in güncel sayfasında market başlığı ve oranlar aynı blokta.
- # Önce yalnızca "İlk Yarı/Maç Sonucu" market bloklarını yakala.
- candidates=[]
- for tag in soup.find_all(['h2','h3','div','li']):
-  txt=' '.join(tag.stripped_strings)
-  nt=norm(txt)
-  if 'ilk yari/mac sonucu' in nt or 'ilk yari mac sonucu' in nt:
-   block=tag
-   # Market bloğunun tamamını içeren en yakın üst elemanı bul.
-   for _ in range(6):
-    if not block.parent: break
-    parent=block.parent
-    pt=' '.join(parent.stripped_strings)
-    if re.search(r'(?<!\d)2\s*/\s*1\s+\d+(?:[.,]\d+)?',pt) and re.search(r'(?<!\d)1\s*/\s*2\s+\d+(?:[.,]\d+)?',pt):
-     block=parent
-     break
-    block=parent
-   bt=' '.join(block.stripped_strings)
-   m21=re.search(r'(?<!\d)2\s*/\s*1\s+(\d+(?:[.,]\d+)?)',bt)
-   m12=re.search(r'(?<!\d)1\s*/\s*2\s+(\d+(?:[.,]\d+)?)',bt)
-   if m21 and m12:
-    candidates.append((float(m21.group(1).replace(',','.')),float(m12.group(1).replace(',','.'))))
-
- if candidates:
-  # Mackolik sayfasında aynı market iki sağlayıcıyla gelebiliyor.
-  # Tarihsel sistemde kullandığımız düzenle uyum için sayfadaki ilk marketi al.
-  return candidates[0][0],candidates[0][1],'İY/MS VAR'
-
- # HTML etiket yapısı değişirse, ham sayfa üzerinde markete yakın alanı tara.
- raw=' '.join(soup.stripped_strings)
- nr=norm(raw)
- pos=nr.find('ilk yari/mac sonucu')
- if pos<0: pos=nr.find('ilk yari mac sonucu')
- if pos>=0:
-  # Normalize edilmiş metinde ilk marketten sonraki yaklaşık alan yeterli.
-  chunk=nr[pos:pos+800]
-  m21=re.search(r'(?<!\d)2\s*/\s*1\s+(\d+(?:[.,]\d+)?)',chunk)
-  m12=re.search(r'(?<!\d)1\s*/\s*2\s+(\d+(?:[.,]\d+)?)',chunk)
+ # 1) Görünen metin: "İlk Yarı/Maç Sonucu" başlığından sonraki ilk 2/1 ve 1/2
+ variants=['ilk yari/mac sonucu','ilk yari mac sonucu','ilk yarı/maç sonucu','ilk yarı maç sonucu']
+ nt=norm(text)
+ positions=[nt.find(v) for v in variants if nt.find(v)>=0]
+ if positions:
+  pos=min(positions)
+  chunk=nt[pos:pos+1800]
+  m21=re.search(r'(?<!\d)2\s*/\s*1(?:\s|:|-)+(\d+(?:[.,]\d+)?)',chunk)
+  m12=re.search(r'(?<!\d)1\s*/\s*2(?:\s|:|-)+(\d+(?:[.,]\d+)?)',chunk)
   if m21 and m12:
-   return float(m21.group(1).replace(',','.')),float(m12.group(1).replace(',','.')),'İY/MS VAR • FALLBACK'
-  return None,None,'İY/MS VAR - ORAN AYRIŞMADI'
+   return float(m21.group(1).replace(',','.')),float(m12.group(1).replace(',','.')),'İY/MS VAR'
+
+ # 2) Market blokları
+ for node in soup.find_all(['section','article','div','ul','li']):
+  bt=' '.join(node.stripped_strings)
+  nbt=norm(bt)
+  if ('ilk yari/mac sonucu' in nbt or 'ilk yari mac sonucu' in nbt):
+   m21=re.search(r'(?<!\d)2\s*/\s*1(?:\s|:|-)+(\d+(?:[.,]\d+)?)',nbt)
+   m12=re.search(r'(?<!\d)1\s*/\s*2(?:\s|:|-)+(\d+(?:[.,]\d+)?)',nbt)
+   if m21 and m12:
+    return float(m21.group(1).replace(',','.')),float(m12.group(1).replace(',','.')),'İY/MS BLOK'
+
+ # 3) Script/JSON içinde escaped market adı + oranlar
+ raw=html.replace('\\u0130','İ').replace('\\u0131','ı').replace('\\/','/')
+ nraw=norm(raw)
+ for key in ['ilk yari/mac sonucu','ilk yari mac sonucu']:
+  pos=nraw.find(key)
+  if pos>=0:
+   chunk=nraw[pos:pos+6000]
+   # JSON biçimleri: "2/1":"21.30", label/value veya düz metin
+   patterns21=[
+    r'["\']?2/1["\']?\s*[:=]\s*["\']?(\d+(?:[.,]\d+)?)',
+    r'["\']?(?:name|label|outcome)["\']?\s*:\s*["\']?2/1["\']?.{0,160}?["\']?(?:value|odd|odds|price)["\']?\s*:\s*["\']?(\d+(?:[.,]\d+)?)',
+    r'2/1.{0,80}?(\d{1,3}(?:[.,]\d+)?)'
+   ]
+   patterns12=[
+    r'["\']?1/2["\']?\s*[:=]\s*["\']?(\d+(?:[.,]\d+)?)',
+    r'["\']?(?:name|label|outcome)["\']?\s*:\s*["\']?1/2["\']?.{0,160}?["\']?(?:value|odd|odds|price)["\']?\s*:\s*["\']?(\d+(?:[.,]\d+)?)',
+    r'1/2.{0,80}?(\d{1,3}(?:[.,]\d+)?)'
+   ]
+   v21=v12=None
+   for pat in patterns21:
+    m=re.search(pat,chunk,re.S)
+    if m: v21=float(m.group(1).replace(',','.')); break
+   for pat in patterns12:
+    m=re.search(pat,chunk,re.S)
+    if m: v12=float(m.group(1).replace(',','.')); break
+   if v21 is not None and v12 is not None:
+    return v21,v12,'İY/MS JSON'
+
  return None,None,'İY/MS MARKET YOK'
 
 def odds_page(mid,h,a):
- # Aynı maç ID'sini birden fazla resmi Mackolik/Sahadan rota biçiminden dene.
- # Streamlit veri merkezinde bir rota sade HTML döndürürse diğerine otomatik geçer.
  sl=f'{slug(h)}-vs-{slug(a)}'
- urls=[
-  f'https://www.mackolik.com/index.php/mac/{sl}/iddaa/{mid}',
-  f'https://www.mackolik.com/mac/{sl}/iddaa/{mid}?source=zaslugabet',
-  f'https://www.sahadan.com/mac/{sl}/{mid}/iddaa',
-  f'https://www.sahadan.com/mac/{sl}/iddaa/{mid}',
+ routes=[
+  ('MACKOLIK-KARSILASTIRMA',f'https://www.mackolik.com/mac/{sl}/karsilastirma/{mid}'),
+  ('MACKOLIK-MAC',f'https://www.mackolik.com/mac/{sl}/{mid}'),
+  ('MACKOLIK-IDDAA',f'https://www.mackolik.com/mac/{sl}/iddaa/{mid}'),
+  ('MACKOLIK-INDEX-IDDAA',f'https://www.mackolik.com/index.php/mac/{sl}/iddaa/{mid}'),
+  ('SAHADAN-IDDAA-1',f'https://www.sahadan.com/mac/{sl}/{mid}/iddaa'),
+  ('SAHADAN-IDDAA-2',f'https://www.sahadan.com/mac/{sl}/iddaa/{mid}'),
  ]
- last_status='SAYFA AÇILMADI'
- for url in urls:
-  for i in range(2):
-   try:
-    r=SCRAPER.get(url,headers=HEAD,timeout=20,allow_redirects=True)
-    if r.status_code==200 and len(r.text)>800:
-     o21,o12,stt=parse_pair(r.text)
-     if o21 and o12:
-      return r.text,('SAHADAN' if 'sahadan.com' in r.url else 'MACKOLIK')
-     last_status=stt
-   except Exception:
-    pass
-   time.sleep(.35+i*.35)
- return None,last_status
-
-def diagnose_url(url):
- try:
-  t0=time.time()
-  r=SCRAPER.get(url,headers=HEAD,timeout=25,allow_redirects=True)
-  elapsed=round(time.time()-t0,2)
-  text=r.text or ''
-  soup=BeautifulSoup(text,'lxml')
-  title=soup.title.get_text(" ",strip=True) if soup.title else ''
-  plain=' '.join(soup.stripped_strings)
-  low=norm(plain)
-  return {
-   'İstek URL':url,
-   'HTTP':r.status_code,
-   'Süre sn':elapsed,
-   'Boyut':len(text),
-   'Son URL':r.url,
-   'Başlık':title[:180],
-   'İY/MS var mı':'EVET' if ('ilk yari mac sonucu' in low or 'half time full time' in low) else 'HAYIR',
-   '2/1 metni':'EVET' if re.search(r'(?<!\d)2\s*/\s*1(?!\d)',plain) else 'HAYIR',
-   '1/2 metni':'EVET' if re.search(r'(?<!\d)1\s*/\s*2(?!\d)',plain) else 'HAYIR',
-   'Cloudflare izi':'EVET' if any(x in low for x in ['cloudflare','cf-ray','just a moment','attention required']) else 'HAYIR',
-   'İlk 220 karakter':plain[:220]
-  }
- except Exception as e:
-  return {
-   'İstek URL':url,'HTTP':'HATA','Süre sn':'','Boyut':0,'Son URL':'','Başlık':'',
-   'İY/MS var mı':'HAYIR','2/1 metni':'HAYIR','1/2 metni':'HAYIR','Cloudflare izi':'',
-   'İlk 220 karakter':f'{type(e).__name__}: {e}'
-  }
-
-def diagnostic_rows():
- mid='cgs5dbd8o9pkw8za412koiyac'
- h='Galatasaray'; a='Kocaelispor'; sl=f'{slug(h)}-vs-{slug(a)}'
- urls=[
-  f'https://www.mackolik.com/index.php/mac/{sl}/iddaa/{mid}',
-  f'https://www.mackolik.com/mac/{sl}/iddaa/{mid}?source=zaslugabet',
-  f'https://www.sahadan.com/mac/{sl}/{mid}/iddaa',
-  f'https://www.sahadan.com/mac/{sl}/iddaa/{mid}',
- ]
- return [diagnose_url(u) for u in urls]
+ last='ORAN ALINAMADI'
+ for name,url in routes:
+  try:
+   r=SCRAPER.get(url,headers=HEAD,timeout=18,allow_redirects=True)
+   if r.status_code!=200:
+    last=f'{name} HTTP {r.status_code}'
+    continue
+   a21,a12,status=parse_pair(r.text)
+   if a21 is not None and a12 is not None:
+    return a21,a12,f'BULUNDU • {name}'
+   last=f'{name} • {status} • {len(r.text):,}B'
+  except Exception as e:
+   last=f'{name} • {type(e).__name__}'
+ return None,None,last
 
 def tag(n,fp):
  if n>=20 and fp>=9:return '🟢 GÜÇLÜ'
@@ -213,6 +183,16 @@ else:
  )
  st.info('Beklenen sağlam DB: 56.513 maç ve 46.200 adet 2/1+1/2 oranlı maç.')
  st.stop()
+
+st.markdown("### 🎯 V9 Oran Motoru Testi")
+if st.button("🎯 GALATASARAY-KOCAELİ ORANINI ÇEK", use_container_width=True):
+ with st.spinner("Mackolik sayfaları deneniyor..."):
+  _a21,_a12,_st=odds_page('cgs5dbd8o9pkw8za412koiyac','Galatasaray','Kocaelispor')
+ if _a21 is not None:
+  st.success(f"2/1 = {_a21:.2f} • 1/2 = {_a12:.2f} • {_st}")
+ else:
+  st.error(f"Oran bulunamadı • {_st}")
+
 chosen=st.date_input('Tarih',date.today(),format='DD.MM.YYYY')
 
 st.markdown("### 🧪 Tek Maç Bağlantı Testi")
