@@ -1,3 +1,4 @@
+import os
 # -*- coding: utf-8 -*-
 import re, html, time, sqlite3
 from datetime import date, datetime
