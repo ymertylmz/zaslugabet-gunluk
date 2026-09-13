@@ -44,45 +44,52 @@ def mtime(m):
   return datetime.fromtimestamp(ts,tz=ZoneInfo('UTC')).astimezone(ZoneInfo('Europe/Istanbul')).strftime('%H:%M')
  except:return ''
 def slug(s): return re.sub(r'-+','-',re.sub(r'[^a-z0-9]+','-',norm(s))).strip('-') or 'x'
-def parse_pair(txt):
- if not txt:return None,None,'SAYFA AÇILMADI'
- soup=BeautifulSoup(txt,'lxml')
+def parse_pair(html):
+ if not html:
+  return None,None,'SAYFA AÇILMADI'
+ soup=BeautifulSoup(html,'lxml')
 
- # 1) En sağlam yol: başlığı bul, o marketin kendi kapsayıcısında 2/1 ve 1/2 ara.
- for h in soup.find_all(['h2','h3']):
-  title=norm(html.unescape(h.get_text(' ',strip=True)))
-  if 'ilk yari mac sonucu' not in title and 'half time full time' not in title:
-   continue
-  box=h.find_parent(class_=lambda c:c and ('widget-iddaa-markets' in str(c) or 'market' in str(c)))
-  candidates=[]
-  if box: candidates.append(box)
-  nxt=h.find_next('div',class_=lambda c:c and 'widget-iddaa-markets__market-content' in str(c))
-  if nxt: candidates.append(nxt)
-  for area in candidates:
-   text=' '.join(area.stripped_strings)
-   m21=re.search(r'(?<!\d)2\s*/\s*1\s+([0-9]+(?:[.,][0-9]+)?)',text)
-   m12=re.search(r'(?<!\d)1\s*/\s*2\s+([0-9]+(?:[.,][0-9]+)?)',text)
-   o21=odd(m21.group(1)) if m21 else None
-   o12=odd(m12.group(1)) if m12 else None
-   if o21 and o12:return o21,o12,'BULUNDU'
+ # V7: Mackolik'in güncel sayfasında market başlığı ve oranlar aynı blokta.
+ # Önce yalnızca "İlk Yarı/Maç Sonucu" market bloklarını yakala.
+ candidates=[]
+ for tag in soup.find_all(['h2','h3','div','li']):
+  txt=' '.join(tag.stripped_strings)
+  nt=norm(txt)
+  if 'ilk yari/mac sonucu' in nt or 'ilk yari mac sonucu' in nt:
+   block=tag
+   # Market bloğunun tamamını içeren en yakın üst elemanı bul.
+   for _ in range(6):
+    if not block.parent: break
+    parent=block.parent
+    pt=' '.join(parent.stripped_strings)
+    if re.search(r'(?<!\d)2\s*/\s*1\s+\d+(?:[.,]\d+)?',pt) and re.search(r'(?<!\d)1\s*/\s*2\s+\d+(?:[.,]\d+)?',pt):
+     block=parent
+     break
+    block=parent
+   bt=' '.join(block.stripped_strings)
+   m21=re.search(r'(?<!\d)2\s*/\s*1\s+(\d+(?:[.,]\d+)?)',bt)
+   m12=re.search(r'(?<!\d)1\s*/\s*2\s+(\d+(?:[.,]\d+)?)',bt)
+   if m21 and m12:
+    candidates.append((float(m21.group(1).replace(',','.')),float(m12.group(1).replace(',','.'))))
 
- # 2) Mackolik HTML yapısı değişirse, sadece İY/MS başlığından sonraki bölümü tara.
- page=' '.join(soup.stripped_strings)
- npage=norm(page)
- pos=npage.find('ilk yari mac sonucu')
- if pos<0: pos=npage.find('half time full time')
+ if candidates:
+  # Mackolik sayfasında aynı market iki sağlayıcıyla gelebiliyor.
+  # Tarihsel sistemde kullandığımız düzenle uyum için sayfadaki ilk marketi al.
+  return candidates[0][0],candidates[0][1],'İY/MS VAR'
+
+ # HTML etiket yapısı değişirse, ham sayfa üzerinde markete yakın alanı tara.
+ raw=' '.join(soup.stripped_strings)
+ nr=norm(raw)
+ pos=nr.find('ilk yari/mac sonucu')
+ if pos<0: pos=nr.find('ilk yari mac sonucu')
  if pos>=0:
-  # Orijinal metinde başlığı doğrudan bulup sınırlı bir pencere kullan.
-  mm=re.search(r'İlk\s*Yarı\s*/?\s*Maç\s*Sonucu|Half\s*Time\s*/?\s*Full\s*Time',page,re.I)
-  chunk=page[mm.start():mm.start()+1200] if mm else page
-  m21=re.search(r'(?<!\d)2\s*/\s*1\s+([0-9]+(?:[.,][0-9]+)?)',chunk)
-  m12=re.search(r'(?<!\d)1\s*/\s*2\s+([0-9]+(?:[.,][0-9]+)?)',chunk)
-  o21=odd(m21.group(1)) if m21 else None
-  o12=odd(m12.group(1)) if m12 else None
-  if o21 and o12:return o21,o12,'BULUNDU'
+  # Normalize edilmiş metinde ilk marketten sonraki yaklaşık alan yeterli.
+  chunk=nr[pos:pos+800]
+  m21=re.search(r'(?<!\d)2\s*/\s*1\s+(\d+(?:[.,]\d+)?)',chunk)
+  m12=re.search(r'(?<!\d)1\s*/\s*2\s+(\d+(?:[.,]\d+)?)',chunk)
+  if m21 and m12:
+   return float(m21.group(1).replace(',','.')),float(m12.group(1).replace(',','.')),'İY/MS VAR • FALLBACK'
   return None,None,'İY/MS VAR - ORAN AYRIŞMADI'
-
- # 3) Başlık yoksa gerçekten yayınlanmamış/HTML farklı.
  return None,None,'İY/MS MARKET YOK'
 
 def odds_page(mid,h,a):
