@@ -233,6 +233,99 @@ def raw_match_probe(html, team='Galatasaray'):
   'Ham parça':chunk
  }
 
+
+def parse_program_rows(raw):
+ rows=[]
+ if not raw: return rows
+ # Mackolik response: {m:[[...],[...]],...}
+ # Extract bracketed match arrays conservatively.
+ for m in re.finditer(r"\[(\d+),'([^']*)',(\d+),'([^']*)','([^']*)',", raw):
+  start=m.start()
+  depth=0; inq=False; esc=False; end=None
+  for i,ch in enumerate(raw[start:],start):
+   if inq:
+    if esc: esc=False
+    elif ch=='\\': esc=True
+    elif ch=="'": inq=False
+    continue
+   if ch=="'": inq=True
+   elif ch=='[': depth+=1
+   elif ch==']':
+    depth-=1
+    if depth==0:
+     end=i+1; break
+  if end:
+   txt=raw[start:end]
+   # convert JS-ish single quotes to python literal safely
+   import ast
+   try:
+    row=ast.literal_eval(txt.replace('{}',"'{}'"))
+    rows.append(row)
+   except Exception:
+    pass
+ return rows
+
+def find_program_match(raw, home, away):
+ for row in parse_program_rows(raw):
+  try:
+   if norm(str(row[1]))==norm(home) and norm(str(row[3]))==norm(away):
+    return row
+  except Exception:
+   pass
+ return None
+
+def archive_htft_from_program(day, home, away):
+ code,url,raw=bulletin_fetch(day)
+ row=find_program_match(raw,home,away)
+ if not row:
+  return None,None,'BÜLTENDE MAÇ YOK',None,None
+ # observed current program format: index 50 is archive Mackolik match id
+ archive_id = row[50] if len(row)>50 else None
+ if not archive_id:
+  return None,None,'ARŞİV ID YOK',None,row
+ archive_url=f'https://arsiv.mackolik.com/Match/Default.aspx?id={archive_id}'
+ try:
+  r=SCRAPER.get(archive_url,headers={
+   **HEAD,
+   'Referer':'https://arsiv.mackolik.com/Genis-Iddaa-Programi',
+  },timeout=25,allow_redirects=True)
+  html=r.text or ''
+  soup=BeautifulSoup(html,'lxml')
+  # Historical parser used iddaa-ms-h tables and "İlk Yarı / Maç Sonucu".
+  for table in soup.find_all('table',class_=lambda x: x and 'iddaa-ms-h' in x):
+   rows=table.find_all('tr')
+   block=[]
+   for tr in rows:
+    vals=[td.get_text(" ",strip=True) for td in tr.find_all('td')]
+    if vals: block.append(vals)
+   if not block: continue
+   title=' '.join(block[0])
+   if 'İlk Yarı / Maç Sonucu' in title or 'İlk Yarı/Maç Sonucu' in title:
+    vals=[]
+    for rr in block[1:]:
+     vals.extend(rr)
+    clean=[]
+    for v in vals:
+     vv=v.replace(',','.')
+     if re.fullmatch(r'\d+(?:\.\d+)?',vv):
+      clean.append(float(vv))
+    # Canonical 3x3 order: 1/1,1/X,1/2, X/1,X/X,X/2, 2/1,2/X,2/2
+    if len(clean)>=9:
+     return clean[6],clean[2],f'ARŞİV SAYFASI • ID {archive_id}',archive_url,row
+  # text fallback
+  txt=' '.join(soup.stripped_strings)
+  nt=norm(txt)
+  p=nt.find('ilk yari / mac sonucu')
+  if p<0: p=nt.find('ilk yari/mac sonucu')
+  if p>=0:
+   chunk=txt[p:p+1800]
+   nums=[float(x.replace(',','.')) for x in re.findall(r'(?<!\d)(\d{1,3}[.,]\d{1,2})(?!\d)',chunk)]
+   if len(nums)>=9:
+    return nums[6],nums[2],f'ARŞİV TEXT • ID {archive_id}',archive_url,row
+  return None,None,f'ARŞİV AÇILDI AMA İY/MS YOK • HTTP {r.status_code} • {len(html):,}B',archive_url,row
+ except Exception as e:
+  return None,None,f'ARŞİV HATA • {type(e).__name__}: {e}',archive_url,row
+
 def tag(n,fp):
  if n>=20 and fp>=9:return '🟢 GÜÇLÜ'
  if n>=8 and fp>=7:return '🟡 TAKİP'
@@ -289,6 +382,22 @@ else:
  st.stop()
 
 
+
+
+st.markdown("### 🧨 V12 Arşiv-ID Testi")
+st.caption("Bültendeki maç kaydından Mackolik arşiv maç ID'sini alıp eski maç sayfasındaki 3×3 İlk Yarı/Maç Sonucu tablosunu doğrudan okur.")
+if st.button("🧨 GALATASARAY-KOCAELİ 2/1 + 1/2 ÇEK",use_container_width=True):
+ from datetime import date as _date
+ with st.spinner("Bülten → arşiv maç ID → İY/MS tablosu..."):
+  _x21,_x12,_xs,_xu,_xr=archive_htft_from_program(_date(2026,9,13),'Galatasaray','Kocaelispor')
+ if _xr:
+  st.write(f"Program kaydı bulundu • archive_id(index 50): {_xr[50] if len(_xr)>50 else 'YOK'}")
+ if _xu:
+  st.caption(_xu)
+ if _x21 is not None:
+  st.success(f"🔥 BULDUK • 2/1 = {_x21:.2f} • 1/2 = {_x12:.2f} • {_xs}")
+ else:
+  st.error(f"Bulunamadı • {_xs}")
 
 st.markdown("### 🔬 V11 Bülten İç Yapı Testi")
 st.caption("Bülten geliyor. Şimdi Galatasaray kaydının ham alanlarını okuyup 2/1 ve 1/2'nin kodlu alan olarak bulunup bulunmadığını kontrol ediyoruz.")
