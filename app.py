@@ -86,18 +86,29 @@ def parse_pair(txt):
  return None,None,'İY/MS MARKET YOK'
 
 def odds_page(mid,h,a):
- # Oran sayfaları için Cloudflare uyumlu oturum kullan.
- for sl in [f'{slug(h)}-vs-{slug(a)}','x-vs-y']:
-  url=f'{BASE}/mac/{sl}/iddaa/{mid}'
-  for i in range(3):
+ # Aynı maç ID'sini birden fazla resmi Mackolik/Sahadan rota biçiminden dene.
+ # Streamlit veri merkezinde bir rota sade HTML döndürürse diğerine otomatik geçer.
+ sl=f'{slug(h)}-vs-{slug(a)}'
+ urls=[
+  f'https://www.mackolik.com/index.php/mac/{sl}/iddaa/{mid}',
+  f'https://www.mackolik.com/mac/{sl}/iddaa/{mid}?source=zaslugabet',
+  f'https://www.sahadan.com/mac/{sl}/{mid}/iddaa',
+  f'https://www.sahadan.com/mac/{sl}/iddaa/{mid}',
+ ]
+ last_status='SAYFA AÇILMADI'
+ for url in urls:
+  for i in range(2):
    try:
-    r=SCRAPER.get(url,headers=HEAD,timeout=25)
+    r=SCRAPER.get(url,headers=HEAD,timeout=20,allow_redirects=True)
     if r.status_code==200 and len(r.text)>800:
-     return r.text
+     o21,o12,stt=parse_pair(r.text)
+     if o21 and o12:
+      return r.text,('SAHADAN' if 'sahadan.com' in r.url else 'MACKOLIK')
+     last_status=stt
    except Exception:
     pass
-   time.sleep(.6+i*.5)
- return None
+   time.sleep(.35+i*.35)
+ return None,last_status
 def tag(n,fp):
  if n>=20 and fp>=9:return '🟢 GÜÇLÜ'
  if n>=8 and fp>=7:return '🟡 TAKİP'
@@ -131,7 +142,13 @@ if st.button('🔎 BUGÜNÜ TARA',type='primary',use_container_width=True):
  bar=st.progress(0,text=f'{len(selected)} maç bulundu, oranlar taranıyor...'); out=[]; all_today=[]
  con=sqlite3.connect(DB)
  for i,(mid,m,country,league,h,a) in enumerate(selected,1):
-  o21,o12,status=parse_pair(odds_page(mid,h,a)); s=stats(con,o21,o12,country,league)
+  page,source=odds_page(mid,h,a)
+  if page:
+   o21,o12,status=parse_pair(page)
+   if o21 and o12: status=f'BULUNDU • {source}'
+  else:
+   o21,o12,status=None,None,source
+  s=stats(con,o21,o12,country,league)
   all_today.append({'Saat':mtime(m),'Ülke':country,'Lig':league,'Maç':f'{h} - {a}',
                     '2/1':o21,'1/2':o12,'Oran Durumu':status,'ID':mid,
                     'Geçmiş':s['n'] if s else 0,'Flip':s['flips'] if s else 0,
