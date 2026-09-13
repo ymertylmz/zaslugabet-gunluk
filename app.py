@@ -214,6 +214,25 @@ def bulletin_diag(day):
   'İlk 350 karakter':plain[:350]
  }
 
+
+def raw_match_probe(html, team='Galatasaray'):
+ raw=html or ''
+ low=raw.lower()
+ pos=low.find(team.lower())
+ if pos<0:
+  return {'Bulundu':'HAYIR','Alan adları':'','Ham parça':'Takım adı ham cevapta bulunamadı.'}
+ lo=max(0,pos-1800); hi=min(len(raw),pos+3500)
+ chunk=raw[lo:hi]
+ fields=[]
+ for x in re.findall(r'(?<![\w])([A-Za-z_][A-Za-z0-9_]{0,30})\s*:',chunk):
+  if x not in fields: fields.append(x)
+ return {
+  'Bulundu':'EVET',
+  'Pozisyon':pos,
+  'Alan adları':', '.join(fields[:80]),
+  'Ham parça':chunk
+ }
+
 def tag(n,fp):
  if n>=20 and fp>=9:return '🟢 GÜÇLÜ'
  if n>=8 and fp>=7:return '🟡 TAKİP'
@@ -269,6 +288,21 @@ else:
  st.info('Beklenen sağlam DB: 56.513 maç ve 46.200 adet 2/1+1/2 oranlı maç.')
  st.stop()
 
+
+
+st.markdown("### 🔬 V11 Bülten İç Yapı Testi")
+st.caption("Bülten geliyor. Şimdi Galatasaray kaydının ham alanlarını okuyup 2/1 ve 1/2'nin kodlu alan olarak bulunup bulunmadığını kontrol ediyoruz.")
+if st.button("🔬 GALATASARAY HAM KAYDINI AÇ",use_container_width=True):
+ from datetime import date as _date
+ with st.spinner("Ham bülten kaydı inceleniyor..."):
+  _code,_url,_html=bulletin_fetch(_date(2026,9,13))
+  _probe=raw_match_probe(_html,'Galatasaray')
+ st.write(f"HTTP: {_code} • Bülten boyutu: {len(_html):,} byte • Galatasaray: {_probe.get('Bulundu')}")
+ st.markdown("**Kayıtta görülen alan adları:**")
+ st.code(_probe.get('Alan adları','') or 'Alan adı yakalanamadı')
+ st.markdown("**Galatasaray çevresindeki ham veri:**")
+ st.code(_probe.get('Ham parça','')[:5300],language=None)
+ st.download_button("⬇️ HAM BÜLTENİ İNDİR",data=_html,file_name="mackolik_bulten_13-09-2026.txt",mime="text/plain",use_container_width=True)
 
 st.markdown("### ⚡ V10 Tek İstek Bülten Testi")
 st.caption("Amaç: 88 ayrı maç sayfası yerine Mackolik İddaa bültenini tek istekte çekmek.")
