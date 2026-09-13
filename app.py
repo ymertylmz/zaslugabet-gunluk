@@ -109,6 +109,48 @@ def odds_page(mid,h,a):
     pass
    time.sleep(.35+i*.35)
  return None,last_status
+
+def diagnose_url(url):
+ try:
+  t0=time.time()
+  r=SCRAPER.get(url,headers=HEAD,timeout=25,allow_redirects=True)
+  elapsed=round(time.time()-t0,2)
+  text=r.text or ''
+  soup=BeautifulSoup(text,'lxml')
+  title=soup.title.get_text(" ",strip=True) if soup.title else ''
+  plain=' '.join(soup.stripped_strings)
+  low=norm(plain)
+  return {
+   'İstek URL':url,
+   'HTTP':r.status_code,
+   'Süre sn':elapsed,
+   'Boyut':len(text),
+   'Son URL':r.url,
+   'Başlık':title[:180],
+   'İY/MS var mı':'EVET' if ('ilk yari mac sonucu' in low or 'half time full time' in low) else 'HAYIR',
+   '2/1 metni':'EVET' if re.search(r'(?<!\d)2\s*/\s*1(?!\d)',plain) else 'HAYIR',
+   '1/2 metni':'EVET' if re.search(r'(?<!\d)1\s*/\s*2(?!\d)',plain) else 'HAYIR',
+   'Cloudflare izi':'EVET' if any(x in low for x in ['cloudflare','cf-ray','just a moment','attention required']) else 'HAYIR',
+   'İlk 220 karakter':plain[:220]
+  }
+ except Exception as e:
+  return {
+   'İstek URL':url,'HTTP':'HATA','Süre sn':'','Boyut':0,'Son URL':'','Başlık':'',
+   'İY/MS var mı':'HAYIR','2/1 metni':'HAYIR','1/2 metni':'HAYIR','Cloudflare izi':'',
+   'İlk 220 karakter':f'{type(e).__name__}: {e}'
+  }
+
+def diagnostic_rows():
+ mid='cgs5dbd8o9pkw8za412koiyac'
+ h='Galatasaray'; a='Kocaelispor'; sl=f'{slug(h)}-vs-{slug(a)}'
+ urls=[
+  f'https://www.mackolik.com/index.php/mac/{sl}/iddaa/{mid}',
+  f'https://www.mackolik.com/mac/{sl}/iddaa/{mid}?source=zaslugabet',
+  f'https://www.sahadan.com/mac/{sl}/{mid}/iddaa',
+  f'https://www.sahadan.com/mac/{sl}/iddaa/{mid}',
+ ]
+ return [diagnose_url(u) for u in urls]
+
 def tag(n,fp):
  if n>=20 and fp>=9:return '🟢 GÜÇLÜ'
  if n>=8 and fp>=7:return '🟡 TAKİP'
@@ -127,6 +169,19 @@ with sqlite3.connect(DB) as c:
  total=c.execute('select count(*) from matches').fetchone()[0]; pairs=c.execute('select count(*) from matches where odd_21 is not null and odd_12 is not null').fetchone()[0]
 c1,c2=st.columns(2); c1.metric('Arşiv',f'{total:,}'.replace(',','.')); c2.metric('Exact oranlı maç',f'{pairs:,}'.replace(',','.'))
 chosen=st.date_input('Tarih',date.today(),format='DD.MM.YYYY')
+
+st.markdown("### 🧪 Tek Maç Bağlantı Testi")
+st.caption("88 maçı tekrar taramadan Galatasaray - Kocaelispor kontrol maçında Mackolik/Sahadan erişimini teşhis eder.")
+if st.button("🧪 KONTROL MAÇINI TEST ET", use_container_width=True):
+ with st.spinner("4 veri yolu tek tek deneniyor..."):
+  rows=diagnostic_rows()
+ st.dataframe(rows,use_container_width=True,hide_index=True)
+ good=[x for x in rows if x.get('İY/MS var mı')=='EVET']
+ if good:
+  st.success("İY/MS marketi en az bir rotada göründü. Bu rotayı ana taramaya bağlayabiliriz.")
+ else:
+  st.error("Hiçbir rotada İY/MS marketi görünmedi. Bu, Streamlit sunucusuna sade/engelli HTML döndüğünü gösterir.")
+
 if st.button('🔎 BUGÜNÜ TARA',type='primary',use_container_width=True):
  ds=chosen.isoformat(); r=get(DAILY,{'sports[]':'Soccer','matchDate':ds},5)
  if not r: st.error('Mackolik günlük listesine ulaşılamadı. Biraz sonra tekrar dene.'); st.stop()
