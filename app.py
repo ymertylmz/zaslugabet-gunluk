@@ -172,9 +172,46 @@ def stats(con,o21,o12,country,league):
 
 st.markdown('''<style>.block-container{padding-top:1rem;max-width:1050px}.hero{background:#0b1220;padding:18px;border-radius:18px;color:white}.card{border:1px solid #263246;border-radius:16px;padding:14px;margin:9px 0}.muted{opacity:.7;font-size:.85rem}</style>''',unsafe_allow_html=True)
 st.markdown('<div class="hero"><h2>⚽ ZaslugaBet Günlük Sinyal</h2><div>40 lig • Exact 2/1 + 1/2 eşleşmesi • Temiz tarihsel arşiv</div></div>',unsafe_allow_html=True)
-with sqlite3.connect(DB) as c:
- total=c.execute('select count(*) from matches').fetchone()[0]; pairs=c.execute('select count(*) from matches where odd_21 is not null and odd_12 is not null').fetchone()[0]
-c1,c2=st.columns(2); c1.metric('Arşiv',f'{total:,}'.replace(',','.')); c2.metric('Exact oranlı maç',f'{pairs:,}'.replace(',','.'))
+DB_OK=False
+DB_ERROR=''
+DB_SIZE=0
+DB_HEADER=''
+DB_TABLES=[]
+total=0
+pairs=0
+try:
+ if not os.path.exists(DB):
+  raise FileNotFoundError(f'DB bulunamadı: {DB}')
+ DB_SIZE=os.path.getsize(DB)
+ with open(DB,'rb') as _f:
+  DB_HEADER=_f.read(16).decode('latin1',errors='replace')
+ with sqlite3.connect(DB) as c:
+  DB_TABLES=[x[0] for x in c.execute("select name from sqlite_master where type='table'").fetchall()]
+  if 'matches' not in DB_TABLES:
+   raise RuntimeError(f'matches tablosu yok. Tablolar: {DB_TABLES}')
+  total=c.execute('select count(*) from matches').fetchone()[0]
+  pairs=c.execute('select count(*) from matches where odd_21 is not null and odd_12 is not null').fetchone()[0]
+ DB_OK=True
+except Exception as e:
+ DB_ERROR=f'{type(e).__name__}: {e}'
+
+if DB_OK:
+ c1,c2=st.columns(2)
+ c1.metric('Arşiv',f'{total:,}'.replace(',','.'))
+ c2.metric('Exact oranlı maç',f'{pairs:,}'.replace(',','.'))
+ st.success(f'✅ DB SAĞLAM • {total:,} maç • {pairs:,} exact-pair oranlı maç')
+else:
+ st.error('🧱 VERİTABANI AÇILAMADI')
+ st.code(
+  f'Dosya: {DB}\n'
+  f'Var mı: {os.path.exists(DB)}\n'
+  f'Boyut: {DB_SIZE:,} byte\n'
+  f'SQLite header: {DB_HEADER!r}\n'
+  f'Tablolar: {DB_TABLES}\n'
+  f'Hata: {DB_ERROR}'
+ )
+ st.info('Beklenen sağlam DB: 56.513 maç ve 46.200 adet 2/1+1/2 oranlı maç.')
+ st.stop()
 chosen=st.date_input('Tarih',date.today(),format='DD.MM.YYYY')
 
 st.markdown("### 🧪 Tek Maç Bağlantı Testi")
