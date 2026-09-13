@@ -44,22 +44,45 @@ def mtime(m):
 def slug(s): return re.sub(r'-+','-',re.sub(r'[^a-z0-9]+','-',norm(s))).strip('-') or 'x'
 def parse_pair(txt):
  if not txt:return None,None,'SAYFA AÇILMADI'
- soup=BeautifulSoup(txt,'lxml'); ul=soup.find('ul',class_=lambda c:c and 'widget-iddaa-markets__markets-list' in c)
- if not ul:return None,None,'MARKET YOK'
- h2s=ul.find_all('h2'); divs=ul.find_all('div',class_=lambda c:c and 'widget-iddaa-markets__market-content' in c and 'widget-base__content' in c)
- idx=None
- for i,h in enumerate(h2s):
-  n=norm(html.unescape(h.get_text(' ',strip=True)))
-  if 'ilk yari mac sonucu' in n or 'half time full time' in n: idx=i; break
- if idx is None or idx>=len(divs):return None,None,'YAYINLANMAMIŞ'
- p={}
- for li in divs[idx].find_all('li'):
-  ss=[x.get_text(' ',strip=True) for x in li.find_all('span') if x.get_text(' ',strip=True)]
-  for j in range(len(ss)-1):
-   if ss[j] in {'1/2','2/1'}:
-    v=odd(ss[j+1])
-    if v:p[ss[j]]=v
- return p.get('2/1'),p.get('1/2'),'BULUNDU' if p.get('2/1') and p.get('1/2') else 'ORAN AYRIŞMADI'
+ soup=BeautifulSoup(txt,'lxml')
+
+ # 1) En sağlam yol: başlığı bul, o marketin kendi kapsayıcısında 2/1 ve 1/2 ara.
+ for h in soup.find_all(['h2','h3']):
+  title=norm(html.unescape(h.get_text(' ',strip=True)))
+  if 'ilk yari mac sonucu' not in title and 'half time full time' not in title:
+   continue
+  box=h.find_parent(class_=lambda c:c and ('widget-iddaa-markets' in str(c) or 'market' in str(c)))
+  candidates=[]
+  if box: candidates.append(box)
+  nxt=h.find_next('div',class_=lambda c:c and 'widget-iddaa-markets__market-content' in str(c))
+  if nxt: candidates.append(nxt)
+  for area in candidates:
+   text=' '.join(area.stripped_strings)
+   m21=re.search(r'(?<!\d)2\s*/\s*1\s+([0-9]+(?:[.,][0-9]+)?)',text)
+   m12=re.search(r'(?<!\d)1\s*/\s*2\s+([0-9]+(?:[.,][0-9]+)?)',text)
+   o21=odd(m21.group(1)) if m21 else None
+   o12=odd(m12.group(1)) if m12 else None
+   if o21 and o12:return o21,o12,'BULUNDU'
+
+ # 2) Mackolik HTML yapısı değişirse, sadece İY/MS başlığından sonraki bölümü tara.
+ page=' '.join(soup.stripped_strings)
+ npage=norm(page)
+ pos=npage.find('ilk yari mac sonucu')
+ if pos<0: pos=npage.find('half time full time')
+ if pos>=0:
+  # Orijinal metinde başlığı doğrudan bulup sınırlı bir pencere kullan.
+  mm=re.search(r'İlk\s*Yarı\s*/?\s*Maç\s*Sonucu|Half\s*Time\s*/?\s*Full\s*Time',page,re.I)
+  chunk=page[mm.start():mm.start()+1200] if mm else page
+  m21=re.search(r'(?<!\d)2\s*/\s*1\s+([0-9]+(?:[.,][0-9]+)?)',chunk)
+  m12=re.search(r'(?<!\d)1\s*/\s*2\s+([0-9]+(?:[.,][0-9]+)?)',chunk)
+  o21=odd(m21.group(1)) if m21 else None
+  o12=odd(m12.group(1)) if m12 else None
+  if o21 and o12:return o21,o12,'BULUNDU'
+  return None,None,'İY/MS VAR - ORAN AYRIŞMADI'
+
+ # 3) Başlık yoksa gerçekten yayınlanmamış/HTML farklı.
+ return None,None,'İY/MS MARKET YOK'
+
 def odds_page(mid,h,a):
  for sl in [f'{slug(h)}-vs-{slug(a)}','x-vs-y']:
   r=get(f'{BASE}/mac/{sl}/iddaa/{mid}')
