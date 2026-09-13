@@ -326,6 +326,76 @@ def archive_htft_from_program(day, home, away):
  except Exception as e:
   return None,None,f'ARŞİV HATA • {type(e).__name__}: {e}',archive_url,row
 
+
+def nesine_parse_htft(html):
+ if not html:
+  return None,None,'BOŞ CEVAP'
+ soup=BeautifulSoup(html,'lxml')
+ txt=' '.join(soup.stripped_strings)
+ nt=norm(txt)
+
+ # Nesine maç merkezi tablosu: İlk Yarı / Maç Sonucu
+ pos=nt.find('ilk yari / mac sonucu')
+ if pos<0: pos=nt.find('ilk yari/mac sonucu')
+ if pos<0:
+  return None,None,'İY/MS BAŞLIĞI YOK'
+
+ chunk=txt[pos:pos+3500]
+ # Direkt etiketlerden yakala.
+ m21=re.search(r'(?<!\d)2\s*/\s*1\s+(\d+(?:[.,]\d+)?)',chunk,re.I)
+ m12=re.search(r'(?<!\d)1\s*/\s*2\s+(\d+(?:[.,]\d+)?)',chunk,re.I)
+ if m21 and m12:
+  return float(m21.group(1).replace(',','.')),float(m12.group(1).replace(',','.')),'NESİNE İY/MS'
+
+ # Tablo sırası fallback:
+ # 1/1, X/1, 2/1, 1/X, X/X, 2/X, 1/2, X/2, 2/2
+ labels=['1/1','X/1','2/1','1/X','X/X','2/X','1/2','X/2','2/2']
+ vals={}
+ for lab in labels:
+  mm=re.search(re.escape(lab)+r'\s+(\d+(?:[.,]\d+)?)',chunk,re.I)
+  if mm:
+   vals[lab]=float(mm.group(1).replace(',','.'))
+ if '2/1' in vals and '1/2' in vals:
+  return vals['2/1'],vals['1/2'],'NESİNE TABLO'
+
+ return None,None,'İY/MS VAR AMA ORAN AYRIŞMADI'
+
+def nesine_probe(day, program_id, known_event_id=None):
+ ymd=day.strftime('%Y%m%d')
+ urls=[
+  f'https://www.nesine.com/Iddaa/Mac-Merkezi/{ymd}/{program_id}',
+  f'https://www.nesine.com/Iddaa/Mac-Merkezi/{ymd}/{program_id}/1',
+ ]
+ if known_event_id:
+  urls.append(f'https://www.nesine.com/Iddaa/Mac-Merkezi/{ymd}/{program_id}/1/{known_event_id}')
+
+ results=[]
+ for url in urls:
+  try:
+   r=SCRAPER.get(url,headers={
+    **HEAD,
+    'Referer':'https://www.nesine.com/iddaa',
+    'Accept-Language':'tr-TR,tr;q=0.9,en;q=0.8'
+   },timeout=25,allow_redirects=True)
+   a21,a12,st=nesine_parse_htft(r.text or '')
+   results.append({
+    'İstek URL':url,
+    'HTTP':r.status_code,
+    'Boyut':len(r.text or ''),
+    'Son URL':r.url,
+    '2/1':a21,
+    '1/2':a12,
+    'Durum':st
+   })
+   if a21 is not None and a12 is not None:
+    return a21,a12,results
+  except Exception as e:
+   results.append({
+    'İstek URL':url,'HTTP':'HATA','Boyut':0,'Son URL':'',
+    '2/1':None,'1/2':None,'Durum':f'{type(e).__name__}: {e}'
+   })
+ return None,None,results
+
 def tag(n,fp):
  if n>=20 and fp>=9:return '🟢 GÜÇLÜ'
  if n>=8 and fp>=7:return '🟡 TAKİP'
@@ -383,6 +453,19 @@ else:
 
 
 
+
+
+st.markdown("### 🚀 V13 Nesine Türkiye İddaa Testi")
+st.caption("Mackolik arşiv sayfasını bırakıyoruz. Aynı program ID'siyle Nesine'nin yasal İddaa maç merkezinden 2/1 ve 1/2'yi doğrudan okumayı deniyoruz.")
+if st.button("🚀 GALATASARAY-KOCAELİ NESİNE'DEN ÇEK",use_container_width=True):
+ from datetime import date as _date
+ with st.spinner("Nesine maç merkezi deneniyor..."):
+  _n21,_n12,_nrows=nesine_probe(_date(2026,9,13),3126016,2259971)
+ st.dataframe(_nrows,use_container_width=True,hide_index=True)
+ if _n21 is not None:
+  st.success(f"🔥 NESİNE ÇALIŞTI • 2/1 = {_n21:.2f} • 1/2 = {_n12:.2f}")
+ else:
+  st.error("Nesine sayfasından İY/MS çifti alınamadı.")
 
 st.markdown("### 🧨 V12 Arşiv-ID Testi")
 st.caption("Bültendeki maç kaydından Mackolik arşiv maç ID'sini alıp eski maç sayfasındaki 3×3 İlk Yarı/Maç Sonucu tablosunu doğrudan okur.")
