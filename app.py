@@ -95,24 +95,39 @@ if st.button('🔎 BUGÜNÜ TARA',type='primary',use_container_width=True):
    h,a=home_away(m)
    if h and a:selected.append((str(mid),m,canon[0],canon[1],h,a))
  if not selected: st.warning('Bu tarihte 40 hedef lig içinde maç bulunamadı.'); st.stop()
- bar=st.progress(0,text=f'{len(selected)} maç bulundu, oranlar taranıyor...'); out=[]
+ bar=st.progress(0,text=f'{len(selected)} maç bulundu, oranlar taranıyor...'); out=[]; all_today=[]
  con=sqlite3.connect(DB)
  for i,(mid,m,country,league,h,a) in enumerate(selected,1):
   o21,o12,status=parse_pair(odds_page(mid,h,a)); s=stats(con,o21,o12,country,league)
+  all_today.append({'Saat':mtime(m),'Ülke':country,'Lig':league,'Maç':f'{h} - {a}',
+                    '2/1':o21,'1/2':o12,'Oran Durumu':status,'ID':mid,
+                    'Geçmiş':s['n'] if s else 0,'Flip':s['flips'] if s else 0,
+                    'Flip %':round(s['fp'],2) if s else 0})
   if s and s['n']:
    out.append({'Saat':mtime(m),'Lig':league,'Maç':f'{h} - {a}','2/1':o21,'1/2':o12,'Geçmiş':s['n'],'Flip':s['flips'],'Flip %':round(s['fp'],2),'2/1 Biten':s['n21'],'1/2 Biten':s['n12'],'2/1 Payı %':round(s['p21'],1),'1/2 Payı %':round(s['p12'],1),'Aynı Lig':s['same'],'Aynı Lig Flip':s['sameflip'],'Etiket':tag(s['n'],s['fp']),'ID':mid,'rows':s['rows']})
   bar.progress(i/len(selected),text=f'{i}/{len(selected)} • {h} - {a}')
- con.close(); bar.empty(); st.session_state['signals']=out; st.session_state['scanned']=len(selected); st.session_state['date']=ds
+ con.close(); bar.empty()
+ st.session_state['signals']=out; st.session_state['all_today']=all_today
+ st.session_state['scanned']=len(selected); st.session_state['date']=ds
 
 if 'signals' in st.session_state:
- out=st.session_state['signals']; st.success(f"{st.session_state['scanned']} maç tarandı • {len(out)} exact geçmiş eşleşmeli sinyal")
- if not out: st.info('Exact geçmiş oran çifti bulunan sinyal yok.')
- for x in sorted(out,key=lambda z:(-z['Flip %'],-z['Geçmiş'])):
-  with st.expander(f"{x['Etiket']}  •  {x['Saat']}  •  {x['Maç']}"):
-   st.markdown(f"**{x['Lig']}**  |  Güncel oran: **2/1 {x['2/1']:.2f} • 1/2 {x['1/2']:.2f}**")
-   a,b,c,d=st.columns(4); a.metric('Geçmiş',x['Geçmiş']); b.metric('Flip',x['Flip']); c.metric('Flip %',f"%{x['Flip %']:.2f}"); d.metric('Aynı Lig',x['Aynı Lig'])
-   st.write(f"2/1 biten: **{x['2/1 Biten']}** (%{x['2/1 Payı %']})  •  1/2 biten: **{x['1/2 Biten']}** (%{x['1/2 Payı %']})  •  Aynı lig flip: **{x['Aynı Lig Flip']}**")
-   st.caption('KANIT • Aşağıda aynı exact 2/1 + 1/2 kapanış oranına sahip geçmiş maçlar var.')
-   rows=[{'Tarih':r[0],'Lig':r[2],'Maç':f'{r[3]} - {r[4]}','İY':f'{r[5]}-{r[6]}','MS':f'{r[7]}-{r[8]}','İY/MS':r[9],'Flip':'✅' if r[10] else ''} for r in x['rows']]
-   st.dataframe(rows,use_container_width=True,hide_index=True)
+ out=st.session_state['signals']; all_today=st.session_state.get('all_today',[])
+ odds_ok=sum(1 for x in all_today if x['2/1'] is not None and x['1/2'] is not None)
+ odds_fail=len(all_today)-odds_ok
+ st.success(f"{st.session_state['scanned']} maç tarandı • {odds_ok} maçta 2/1 + 1/2 oranı bulundu • {odds_fail} maçta oran alınamadı • {len(out)} exact geçmiş eşleşmeli sinyal")
+ tab1,tab2=st.tabs(['🔥 BUGÜNÜN SİNYALLERİ','📋 BUGÜN TÜM MAÇLAR'])
+ with tab2:
+  st.subheader('Bugün Tüm Maçlar')
+  st.caption('Burada taranan her maçın Mackolik’ten çekilen güncel 2/1 ve 1/2 oranını görebilirsin. Böylece 0 sinyalin gerçek mi, veri çekme sorunu mu olduğunu kontrol ederiz.')
+  st.dataframe(all_today,use_container_width=True,hide_index=True)
+ with tab1:
+  if not out: st.info('Exact geçmiş oran çifti bulunan sinyal yok.')
+  for x in sorted(out,key=lambda z:(-z['Flip %'],-z['Geçmiş'])):
+   with st.expander(f"{x['Etiket']}  •  {x['Saat']}  •  {x['Maç']}"):
+    st.markdown(f"**{x['Lig']}**  |  Güncel oran: **2/1 {x['2/1']:.2f} • 1/2 {x['1/2']:.2f}**")
+    a,b,c,d=st.columns(4); a.metric('Geçmiş',x['Geçmiş']); b.metric('Flip',x['Flip']); c.metric('Flip %',f"%{x['Flip %']:.2f}"); d.metric('Aynı Lig',x['Aynı Lig'])
+    st.write(f"2/1 biten: **{x['2/1 Biten']}** (%{x['2/1 Payı %']})  •  1/2 biten: **{x['1/2 Biten']}** (%{x['1/2 Payı %']})  •  Aynı lig flip: **{x['Aynı Lig Flip']}**")
+    st.caption('KANIT • Aşağıda aynı exact 2/1 + 1/2 kapanış oranına sahip geçmiş maçlar var.')
+    rows=[{'Tarih':r[0],'Lig':r[2],'Maç':f'{r[3]} - {r[4]}','İY':f'{r[5]}-{r[6]}','MS':f'{r[7]}-{r[8]}','İY/MS':r[9],'Flip':'✅' if r[10] else ''} for r in x['rows']]
+    st.dataframe(rows,use_container_width=True,hide_index=True)
 st.caption('⚠️ Bugünkü oranlar tarama anındaki GÜNCEL oranlardır. Tarihsel arşivdeki oranlar KAPANIŞ oranlarıdır. Exact eşleşme, bugünkü oranın kapanışa kadar değişmeyeceği anlamına gelmez.')
